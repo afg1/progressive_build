@@ -91,7 +91,6 @@ fn load_chunk(paths:&mut Vec<PathBuf>, select:&String) -> Result<DataFrame, anyh
         output = match output
         {
             None => {
-                println!("Writethrough");
                 let output_df = genes.clone();
                 Some(output_df)
             },
