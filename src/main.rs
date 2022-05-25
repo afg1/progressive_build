@@ -21,8 +21,8 @@ struct Args {
     output: String,
 
     /// The column to select. If files have no headers, use "column_N"
-    #[clap(short, long)]
-    select: String,
+    #[clap(short, long, multiple_values(true))]
+    select: Vec<String>,
 
     /// The size of chunks to process at once
     #[clap(short, long, default_value_t=100)]
@@ -31,16 +31,24 @@ struct Args {
 
 
 fn load_data(path: &PathBuf, delim: u8) -> Result<DataFrame> {
-    let df:DataFrame = CsvReader::from_path(path)?
+    let mut df:DataFrame = CsvReader::from_path(path)?
     .has_header(true)
     .with_delimiter(delim)
     .with_ignore_parser_errors(true)
     .finish().unwrap();
-    Ok(df)
+
+    // hstack the experiment name (derived from the filename) into the DataFrame
+    println!("{:?}", path.file_name().unwrap().to_str().unwrap().replace("-transcripts", "").replace("-tpms.tsv", ""));
+    let iter_exp = vec![path.file_name().unwrap().to_str().unwrap().replace("-transcripts", "").replace("-tpms.tsv", "")].into_iter();
+    let mut exp_col: Series = iter_exp.flat_map(|n| std::iter::repeat(n).take(df.height())).into_iter().collect();
+    exp_col.rename("experiment");
+    let full_df:DataFrame = df.with_column(exp_col).unwrap().clone();
+
+    Ok(full_df)
 }
 
 
-fn load_chunk(paths:&mut Vec<PathBuf>, select:&String) -> Result<DataFrame, anyhow::Error>
+fn load_chunk(paths:&mut Vec<PathBuf>, select:&Vec<String>) -> Result<DataFrame, anyhow::Error>
 {
     /*
     Work with the chunks of input to reduce them into a single dataframe of the genes we want from
@@ -77,12 +85,12 @@ fn load_chunk(paths:&mut Vec<PathBuf>, select:&String) -> Result<DataFrame, anyh
             });
         }
 
-
+        println!("{:?}", select);
         // Drop everything from the input except the genes
-        let genes:DataFrame = input.select([&select]).unwrap_or_else(|error| {
+        let genes:DataFrame = input.select(select.iter()).unwrap_or_else(|error| {
             match error
             {
-                PolarsError::NotFound(_string) => {panic!("{} was not found in the header, does the file have a header?\n{:?}", select, input.get_column_names());},
+                PolarsError::NotFound(_string) => {panic!("{:?} was not found in the header, does the file have a header?\n{:?}", select, input.get_column_names());},
                 _ => panic!("Error selecting column from input: {:?}", error),
 
             }
