@@ -46,7 +46,7 @@ fn main()  {
 
     while let Some(infile) = args.input.pop() {
     // Load the input Csv
-        let input:DataFrame = if infile.extension().unwrap() == "tsv"
+        let mut input:DataFrame = if infile.extension().unwrap() == "tsv"
         {
             load_data(&infile, b'\t')
         }
@@ -62,6 +62,17 @@ fn main()  {
             }
         });
 
+        // Rename columns to remove . in the names
+        let mut new_cols = Vec::new();
+         for nm in input.get_column_names().iter() {
+            new_cols.push(nm.replace(".", ""));
+        };
+
+        if new_cols != input.get_column_names() {
+            input.set_column_names(&new_cols).unwrap_or_else(|error| {
+                panic!("Failed to set column names for some reason {:?}", error);
+            });
+        }
         n_files += 1;
 
 
@@ -69,7 +80,7 @@ fn main()  {
         let genes:DataFrame = input.select([&args.select]).unwrap_or_else(|error| {
             match error
             {
-                PolarsError::NotFound(_string) => {panic!("{} was not found in the header, does the file have a header?\n{:?}", args.select, input);},
+                PolarsError::NotFound(_string) => {panic!("{} was not found in the header, does the file have a header?\n{:?}", args.select, input.get_column_names());},
                 _ => panic!("Error selecting column from input: {:?}", error),
 
             }
