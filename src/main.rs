@@ -4,6 +4,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use polars::frame::DataFrame;
 use polars::prelude::*;
 
 #[derive(Parser, Debug)]
@@ -51,9 +52,9 @@ fn load_data(path: &PathBuf, delim: u8) -> Result<DataFrame> {
             .collect::<Vec<String>>(),
     );
     // exp_col.rename("experiment");
-    let full_df: DataFrame = df.with_column(exp_col).unwrap().clone();
+    df.hstack_mut(&[exp_col]).unwrap();
 
-    Ok(full_df)
+    Ok(df)
 }
 
 fn load_chunk(paths: &mut Vec<PathBuf>, select: &Vec<String>) -> Result<DataFrame, anyhow::Error> {
@@ -77,7 +78,7 @@ fn load_chunk(paths: &mut Vec<PathBuf>, select: &Vec<String>) -> Result<DataFram
         // Rename columns to remove . in the names
         let mut new_cols = Vec::new();
         for nm in input.get_column_names().iter() {
-            new_cols.push(nm.replace(".", ""));
+            new_cols.push(nm.replace('.', ""));
         }
 
         if new_cols != input.get_column_names() {
@@ -107,30 +108,28 @@ fn load_chunk(paths: &mut Vec<PathBuf>, select: &Vec<String>) -> Result<DataFram
             }
             Some(mut output_df) => {
                 // genes =/= output, so we are handling a new file
-                output_df
-                    .extend(&genes)
-                    .unwrap_or_else(|error| match error {
-                        _ => panic!("Failed to extend the output dataframe. {:?}", error),
-                    });
+                output_df.extend(&genes).unwrap_or_else(|error| {
+                    panic!("Failed to extend the output dataframe. {:?}", error)
+                });
                 output_df = output_df
                     .unique(None, UniqueKeepStrategy::First)
-                    .unwrap_or_else(|error| match error {
-                        _ => panic!(
+                    .unwrap_or_else(|error| {
+                        panic!(
                             "Failed to parse selected column for uniqueness. {:?}",
                             error
-                        ),
+                        )
                     });
                 Some(output_df)
             }
         }
     }
-    return Ok(output.unwrap());
+    Ok(output.unwrap())
 }
 
 fn main() {
     let timer = Instant::now();
 
-    let mut args = Args::parse();
+    let args = Args::parse();
 
     let n_files = args.input.len();
 
@@ -145,7 +144,7 @@ fn main() {
     for mut files_chunk in chunked_input {
         dataframes.push(
             load_chunk(&mut files_chunk, &args.select)
-                .unwrap_or_else(|error| panic!("Something wrong in one of the reads, aborting")),
+                .unwrap_or_else(|_error| panic!("Something wrong in one of the reads, aborting")),
         );
         n_chunks += 1;
         println!("Done {} files", n_chunks * args.chunksize);
@@ -153,10 +152,12 @@ fn main() {
 
     let mut output: DataFrame = dataframes[0].clone();
 
-    dataframes.iter().map(|item| {
-        output.extend(&item);
-        output.unique(None, UniqueKeepStrategy::First).unwrap()
-    });
+    for item in dataframes.iter() {
+        output.extend(item).unwrap_or_else(|error| {
+            panic!("Unable to extend the DataFrame! Out of memory? {:?}", error)
+        });
+        output.unique(None, UniqueKeepStrategy::First).unwrap();
+    }
 
     //
     // match output {
@@ -166,9 +167,7 @@ fn main() {
     CsvWriter::new(out_stream)
         .has_header(true)
         .finish(&mut output)
-        .unwrap_or_else(|error| match error {
-            _ => panic!("Something wrong writing file {:?}", error),
-        });
+        .unwrap_or_else(|error| panic!("Something wrong writing file: {:?}", error));
     //
     println!(
         "Processed {} in {} seconds",
