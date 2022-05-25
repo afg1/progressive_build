@@ -30,22 +30,21 @@ fn load_data(path: &PathBuf, delim: u8) -> Result<DataFrame> {
     let df:DataFrame = CsvReader::from_path(path)?
     .has_header(true)
     .with_delimiter(delim)
+    .with_ignore_parser_errors(true)
     .finish().unwrap();
     Ok(df)
 }
 
 
-
-fn main()  {
-    let timer = Instant::now();
-
-    let mut args = Args::parse();
-
-    let mut n_files = 0;
+fn load_chunk(paths:&mut Vec<PathBuf>, select:&String) -> Result<DataFrame, anyhow::Error>
+{
+    /*
+    Work with the chunks of input to reduce them into a single dataframe of the genes we want from
+    that particular set of experiments. Should return a single dataframe
+    */
     let mut output: Option<DataFrame> = None;
-
-    while let Some(infile) = args.input.pop() {
-    // Load the input Csv
+    while let Some(infile) = paths.pop() {
+        // Load the input Csv
         let mut input:DataFrame = if infile.extension().unwrap() == "tsv"
         {
             load_data(&infile, b'\t')
@@ -56,7 +55,7 @@ fn main()  {
         }.unwrap_or_else(|error| {
             match error.downcast_ref::<PolarsError>()
             {
-                Some(PolarsError::Io(_string)) => panic!("Input file does not exist! {:?}", args.input),
+                Some(PolarsError::Io(_string)) => panic!("Input file does not exist! {:?}", infile),
                 _ => panic!("An error occurred! {:?}", error),
 
             }
@@ -73,14 +72,13 @@ fn main()  {
                 panic!("Failed to set column names for some reason {:?}", error);
             });
         }
-        n_files += 1;
 
 
         // Drop everything from the input except the genes
-        let genes:DataFrame = input.select([&args.select]).unwrap_or_else(|error| {
+        let genes:DataFrame = input.select([&select]).unwrap_or_else(|error| {
             match error
             {
-                PolarsError::NotFound(_string) => {panic!("{} was not found in the header, does the file have a header?\n{:?}", args.select, input.get_column_names());},
+                PolarsError::NotFound(_string) => {panic!("{} was not found in the header, does the file have a header?\n{:?}", select, input.get_column_names());},
                 _ => panic!("Error selecting column from input: {:?}", error),
 
             }
@@ -106,26 +104,56 @@ fn main()  {
                     }
                 });
                 Some(output_df)
-                }
+            }
         }
     }
+    return Ok(output.unwrap())
+}
+
+
+fn main()  {
+    let timer = Instant::now();
+
+    let mut args = Args::parse();
+
+    let  n_files = args.input.len();
+
+    let mut dataframes: Vec<DataFrame> = Vec::new();
+    let  chunked_input: Vec<Vec<PathBuf>> = args.input.chunks(100).map(|x| x.to_vec()).collect();
+    // Read everything into a big vector
+    for mut files_chunk in chunked_input
+    {
+        dataframes.push( load_chunk(&mut files_chunk, &args.select).unwrap_or_else(|error| {
+            panic!("Something wrong in one of the reads, aborting")
+        }) );
+    }
+
+
+    let mut output:DataFrame = dataframes[0].clone();
+
+    dataframes.iter()
+                .map(|item| {
+                     output.extend(&item);
+                     output.unique(None, UniqueKeepStrategy::First).unwrap()
+                 });
+
     //
-    match output {
-        None =>  println!("Nothing was processed, or no output generated"),
-        Some(mut output_df) => {
-            let out_stream : File = File::create(args.output).unwrap();
-            CsvWriter::new(out_stream)
-            .has_header(true)
-            .finish(&mut output_df)
-            .unwrap_or_else(|error|{
-                match error {
-                    _ => panic!("Something wrong writing file {:?}", error),
-                }
-            });
-
-            println!("Processed {} in {} seconds", n_files, timer.elapsed().as_secs());
-        }
-
-    }
+    // match output {
+    //     None =>  println!("Nothing was processed, or no output generated"),
+    //     Some(mut output_df) => {
+    //         let out_stream : File = File::create(args.output).unwrap();
+    //         CsvWriter::new(out_stream)
+    //         .has_header(true)
+    //         .finish(&mut output_df)
+    //         .unwrap_or_else(|error|{
+    //             match error {
+    //                 _ => panic!("Something wrong writing file {:?}", error),
+    //             }
+    //         });
+    //
+    println!("Processed {} in {} seconds", n_files, timer.elapsed().as_secs());
+    //     }
+    //
+    // }
 
 }
