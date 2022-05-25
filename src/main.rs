@@ -38,7 +38,6 @@ fn load_data(path: &PathBuf, delim: u8) -> Result<DataFrame> {
     .finish().unwrap();
 
     // hstack the experiment name (derived from the filename) into the DataFrame
-    println!("{:?}", path.file_name().unwrap().to_str().unwrap().replace("-transcripts", "").replace("-tpms.tsv", ""));
     let iter_exp = vec![path.file_name().unwrap().to_str().unwrap().replace("-transcripts", "").replace("-tpms.tsv", "")].into_iter();
     let mut exp_col: Series = iter_exp.flat_map(|n| std::iter::repeat(n).take(df.height())).into_iter().collect();
     exp_col.rename("experiment");
