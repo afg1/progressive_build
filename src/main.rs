@@ -23,6 +23,10 @@ struct Args {
     /// The column to select. If files have no headers, use "column_N"
     #[clap(short, long)]
     select: String,
+
+    /// The size of chunks to process at once
+    #[clap(short, long, default_value_t=100)]
+    chunksize: usize
 }
 
 
@@ -119,13 +123,16 @@ fn main()  {
     let  n_files = args.input.len();
 
     let mut dataframes: Vec<DataFrame> = Vec::new();
-    let  chunked_input: Vec<Vec<PathBuf>> = args.input.chunks(100).map(|x| x.to_vec()).collect();
+    let  chunked_input: Vec<Vec<PathBuf>> = args.input.chunks(args.chunksize).map(|x| x.to_vec()).collect();
     // Read everything into a big vector
+    let mut n_chunks = 0;
     for mut files_chunk in chunked_input
     {
         dataframes.push( load_chunk(&mut files_chunk, &args.select).unwrap_or_else(|error| {
             panic!("Something wrong in one of the reads, aborting")
         }) );
+        n_chunks += 1;
+        println!("Done {} files", n_chunks * args.chunksize);
     }
 
 
@@ -141,15 +148,15 @@ fn main()  {
     // match output {
     //     None =>  println!("Nothing was processed, or no output generated"),
     //     Some(mut output_df) => {
-    //         let out_stream : File = File::create(args.output).unwrap();
-    //         CsvWriter::new(out_stream)
-    //         .has_header(true)
-    //         .finish(&mut output_df)
-    //         .unwrap_or_else(|error|{
-    //             match error {
-    //                 _ => panic!("Something wrong writing file {:?}", error),
-    //             }
-    //         });
+            let out_stream : File = File::create(args.output).unwrap();
+            CsvWriter::new(out_stream)
+            .has_header(true)
+            .finish(&mut output)
+            .unwrap_or_else(|error|{
+                match error {
+                    _ => panic!("Something wrong writing file {:?}", error),
+                }
+            });
     //
     println!("Processed {} in {} seconds", n_files, timer.elapsed().as_secs());
     //     }
