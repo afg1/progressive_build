@@ -84,7 +84,6 @@ fn load_chunk(paths:&mut Vec<PathBuf>, select:&Vec<String>) -> Result<DataFrame,
             });
         }
 
-        println!("{:?}", select);
         // Drop everything from the input except the genes
         let genes:DataFrame = input.select(select.iter()).unwrap_or_else(|error| {
             match error
