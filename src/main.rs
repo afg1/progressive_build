@@ -1,6 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
+use regex::Regex;
+use std::collections::HashMap;
 use std::fs::File;
+use std::io::{self, BufRead};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -57,7 +60,10 @@ fn load_data(path: &PathBuf, delim: u8) -> Result<DataFrame> {
     Ok(df)
 }
 
-fn load_chunk(paths: &mut Vec<PathBuf>, select: &Vec<String>) -> Result<DataFrame, anyhow::Error> {
+fn load_chunk(
+    paths: &mut Vec<PathBuf>,
+    select: &mut Vec<String>,
+) -> Result<DataFrame, anyhow::Error> {
     /*
     Work with the chunks of input to reduce them into a single dataframe of the genes we want from
     that particular set of experiments. Should return a single dataframe
@@ -126,16 +132,73 @@ fn load_chunk(paths: &mut Vec<PathBuf>, select: &Vec<String>) -> Result<DataFram
     Ok(output.unwrap())
 }
 
+fn get_taxid(paths: &mut Vec<PathBuf>, lookup_table: &mut HashMap<String, String>) {
+    let tax_regex = Regex::new(r".*Taxon_([0-9]{4,})").unwrap();
+
+    while let Some(path) = paths.pop() {
+        let exp_name = path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split('-')
+            .collect::<Vec<&str>>()[0..=2]
+            .join("-")
+            .replace(".condensed", "");
+
+        let file = File::open(path).unwrap();
+        let lines = io::BufReader::new(file).lines();
+        for line in lines {
+            match line {
+                Ok(line) => {
+                    let captures = tax_regex.captures(line.as_str());
+                    match captures {
+                        Some(caps) => {
+                            let taxid = caps.get(1).map_or("", |m| m.as_str());
+                            lookup_table.insert(exp_name, taxid.to_string());
+                            break;
+                        }
+                        None => {}
+                    };
+                }
+                Err(_idc) => {}
+            }
+        }
+    }
+}
+
 fn main() {
     let timer = Instant::now();
 
-    let args = Args::parse();
+    let mut args = Args::parse();
 
-    let n_files = args.input.len();
+    // Always select the experiment
+    args.select.push("experiment".to_string());
+
+    // separate expression data from taxa data
+    let mut taxa_files: Vec<PathBuf> = Vec::new();
+    let mut expr_files: Vec<PathBuf> = Vec::new();
+
+    let re = Regex::new(r"sdrf.tsv").unwrap();
+
+    for infile in args.input {
+        if re.is_match(infile.to_str().unwrap()) {
+            // File is experiment setup data, parse for taxa
+            taxa_files.push(infile);
+        } else {
+            // Should only be expression data, parse for genes
+            expr_files.push(infile);
+        }
+    }
+
+    println!("{} taxa files to parse", taxa_files.len());
+    println!("{} expression files to parse", expr_files.len());
+
+    let n_files = expr_files.len();
 
     let mut dataframes: Vec<DataFrame> = Vec::new();
-    let chunked_input: Vec<Vec<PathBuf>> = args
-        .input
+
+    let chunked_input: Vec<Vec<PathBuf>> = expr_files
         .chunks(args.chunksize)
         .map(|x| x.to_vec())
         .collect();
@@ -143,7 +206,7 @@ fn main() {
     let mut n_chunks = 0;
     for mut files_chunk in chunked_input {
         dataframes.push(
-            load_chunk(&mut files_chunk, &args.select)
+            load_chunk(&mut files_chunk, &mut args.select)
                 .unwrap_or_else(|_error| panic!("Something wrong in one of the reads, aborting")),
         );
         n_chunks += 1;
@@ -159,22 +222,42 @@ fn main() {
         output.unique(None, UniqueKeepStrategy::First).unwrap();
     }
 
-    //
-    // match output {
-    //     None =>  println!("Nothing was processed, or no output generated"),
-    //     Some(mut output_df) => {
+    // Now parse the experiment files to get taxa
+    let chunked_taxa: Vec<Vec<PathBuf>> = taxa_files
+        .chunks(args.chunksize)
+        .map(|x| x.to_vec())
+        .collect();
+
+    let mut lookup_table: HashMap<String, String> = HashMap::new();
+
+    for mut tax_chunk in chunked_taxa {
+        get_taxid(&mut tax_chunk, &mut lookup_table);
+    }
+
+    // Now we have the experiment - taxid lookup_table, we just need to add the column to the output df
+
+    let expt_col = output.select(["experiment"]).unwrap();
+    let mut tax_ids: Vec<String> = Vec::with_capacity(expt_col.height());
+    for ex in expt_col.iter() {
+        let uhy = ex.utf8().unwrap();
+        for (idx, x) in uhy.into_iter().enumerate() {
+            tax_ids.insert(idx, lookup_table.get(x.unwrap()).unwrap().to_string());
+        }
+    }
+
+    output
+        .hstack_mut(&[Series::new("taxid", tax_ids.into_iter())])
+        .unwrap();
+
     let out_stream: File = File::create(args.output).unwrap();
     CsvWriter::new(out_stream)
         .has_header(true)
         .finish(&mut output)
         .unwrap_or_else(|error| panic!("Something wrong writing file: {:?}", error));
-    //
+
     println!(
         "Processed {} in {} seconds",
         n_files,
         timer.elapsed().as_secs()
     );
-    //     }
-    //
-    // }
 }
