@@ -239,12 +239,17 @@ fn main() {
     let expt_col = output.select(["experiment"]).unwrap();
     let mut tax_ids: Vec<String> = Vec::with_capacity(expt_col.height());
     for ex in expt_col.iter() {
+        let mut warn_flag:bool = true;
         let uhy = ex.utf8().unwrap();
         for (idx, x) in uhy.into_iter().enumerate() {
             if lookup_table.contains_key(x.unwrap()) {
                 tax_ids.insert(idx, lookup_table.get(x.unwrap()).unwrap().to_string());
             } else {
                 tax_ids.insert(idx, String::new());
+                if warn_flag {
+                    println!("Experiment {} does not name a taxon", x.unwrap());
+                    warn_flag = false;
+                }
             }
         }
     }
