@@ -241,7 +241,11 @@ fn main() {
     for ex in expt_col.iter() {
         let uhy = ex.utf8().unwrap();
         for (idx, x) in uhy.into_iter().enumerate() {
-            tax_ids.insert(idx, lookup_table.get(x.unwrap()).unwrap().to_string());
+            if lookup_table.contains_key(x.unwrap()) {
+                tax_ids.insert(idx, lookup_table.get(x.unwrap()).unwrap().to_string());
+            } else {
+                tax_ids.insert(idx, String::new());
+            }
         }
     }
 
